@@ -1,0 +1,94 @@
+---
+title: "Practical Machine Learning - Course Project"
+output: html_document
+---
+
+##Executive Summary
+
+In this report, data from the HAR dataset (http://groupware.les.inf.puc-rio.br/har) was analyzed with the goal of developing a machine learning model to predict the "classe" (a measure of whether a certain excercise was performed correctly) given
+a set of accelerometer predictors. This report was compiled as part of the course project for the Coursera Practial Machine Learning course.
+
+A random forest model was found to be sufficienty accurate to predict the the "classe" given the selected predictors, at 97% accuracy.
+
+##Dataset
+
+Loaded the required libraries:
+```{r load_libraries,message=FALSE}
+library(caret)
+library(knitr)
+library(rpart)
+library(data.table)
+library(randomForest)
+```
+
+The data was loaded into a raw data table.
+
+```{r load_raw, cache=TRUE}
+raw <- as.data.table(read.csv("./project data/pml-training.csv", header=TRUE, sep=","))
+raw <- raw[,X := NULL]
+```
+
+##Cross Validation
+The raw dataset was partitioned into a training and a testing dataset in a ratio of 60/40 to conform with cross validation principles.
+```{r cross_val}
+set.seed(4444)
+inTrain <- createDataPartition(y=raw$classe, p=0.6, list=F)
+training <- raw[c(inTrain)]
+testing <- raw[-c(inTrain)]
+dim(training)
+dim(testing)
+```
+
+##Data Cleaning
+Any variable with NAs was removed, as were the "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", and "num_window" variables. This brought the number of variables down to 86.
+```{r data_cleaning}
+na.cols <- training[,sapply(.SD, function(x) any(is.na(x)))]
+training <- training[,c(names(which(na.cols == T))) := NULL]
+training <- training[,c(1:6) := NULL]
+ncol(training)
+```
+
+##Model Selection
+###Feature Selection
+Near Zero Variance analysis was performed in order to remove those variables that had a near zero variance and thus would not contribute to the predictive capabilities of the model. This reduced the dataset to 53 predictors (including the "classe" outcome)
+```{r nzv}
+nzv <- nearZeroVar(training, saveMetrics=T)
+var.remove <- rownames(nzv[nzv$nzv==TRUE,])
+training <- training[,c(var.remove) := NULL]
+ncol(training)
+```
+
+###Principle Component Analysis
+Performing principle component analysis further reduces the predictors to 26, which capture 95% of the variance.
+```{r pca, cache=TRUE}
+preProc <- preProcess(training[,-53, with=F], method="pca")
+trainPC <- predict(preProc, training[,-53, with=F])
+preProc
+```
+
+###Models
+Given the time available, only a few models were evaluated. The most accurate was a random forest model, with an error rate of 3.12%.
+```{r model_rf, cache=TRUE}
+model.rf <<- randomForest(training$classe ~ ., data = trainPC)
+model.rf
+```
+
+```{r model_rpart, cache=TRUE, echo=FALSE}
+model.rpart <<- train(training$classe ~ ., method = "rpart", data = trainPC)
+```
+
+### Test Dataset
+The test dataset (from the initial raw data) now needed to be preprocessed:
+```{r test_data}
+testing <- testing[,c(names(which(na.cols == T))) := NULL]
+testing <- testing[,c(1:6) := NULL]
+testing <- testing[,c(var.remove) := NULL] 
+testPC <- predict(preProc, testing[,-53, with=F])
+```
+
+##Results
+###Sample Errors
+The sample error for the model using the "rpart" method only provided a 39% accuracy. The more accurate model is using random forest, with an accuracy of 97% and a kappa value of .9632 (a measure of concordance) and can be seen below:
+```{r final_result}
+confusionMatrix(testing$classe, predict(model.rf, testPC))
+```
